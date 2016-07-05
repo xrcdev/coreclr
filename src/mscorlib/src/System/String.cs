@@ -90,16 +90,16 @@ namespace System {
                 throw new ArgumentNullException("values");
             Contract.EndContractBlock();
 
-            if (values.Length == 0 || values[0] == null)
+            if (values.Length == 0)
                 return String.Empty;
 
             StringBuilder result = StringBuilderCache.Acquire();
 
-            result.Append(values[0].ToString());
-
-            for (int i = 1; i < values.Length; i++) {
-                result.Append(separator);
-                if (values[i] != null) {
+            for (int i = 0; i < values.Length; i++) {
+                if (values[i] != null ) {
+                    if (result.Length>0) {
+                        result.Append(separator);
+                    }
                     result.Append(values[i].ToString());
                 }
             }
