@@ -11,28 +11,36 @@
 
 EEConfig * g_pConfig;
 
-void CLREventStatic::CreateManualEvent(bool bInitialState)
+bool CLREventStatic::CreateManualEventNoThrow(bool bInitialState)
 {
     m_hEvent = CreateEventW(NULL, TRUE, bInitialState, NULL);
     m_fInitialized = true;
+
+    return IsValid();
 }
 
-void CLREventStatic::CreateAutoEvent(bool bInitialState)
+bool CLREventStatic::CreateAutoEventNoThrow(bool bInitialState)
 {
     m_hEvent = CreateEventW(NULL, FALSE, bInitialState, NULL);
     m_fInitialized = true;
+
+    return IsValid();
 }
 
-void CLREventStatic::CreateOSManualEvent(bool bInitialState)
+bool CLREventStatic::CreateOSManualEventNoThrow(bool bInitialState)
 {
     m_hEvent = CreateEventW(NULL, TRUE, bInitialState, NULL);
     m_fInitialized = true;
+
+    return IsValid();
 }
 
-void CLREventStatic::CreateOSAutoEvent(bool bInitialState)
+bool CLREventStatic::CreateOSAutoEventNoThrow(bool bInitialState)
 {
     m_hEvent = CreateEventW(NULL, FALSE, bInitialState, NULL);
     m_fInitialized = true;
+
+    return IsValid();
 }
 
 void CLREventStatic::CloseEvent()
@@ -123,7 +131,7 @@ void ThreadStore::AttachCurrentThread()
 
 void GCToEEInterface::SuspendEE(GCToEEInterface::SUSPEND_REASON reason)
 {
-    GCHeap::GetGCHeap()->SetGCInProgress(TRUE);
+    g_theGCHeap->SetGCInProgress(TRUE);
 
     // TODO: Implement
 }
@@ -132,7 +140,7 @@ void GCToEEInterface::RestartEE(bool bFinishedGC)
 {
     // TODO: Implement
 
-    GCHeap::GetGCHeap()->SetGCInProgress(FALSE);
+    g_theGCHeap->SetGCInProgress(FALSE);
 }
 
 void GCToEEInterface::GcScanRoots(promote_func* fn,  int condemned, int max_gen, ScanContext* sc)
@@ -176,12 +184,7 @@ void GCToEEInterface::DisablePreemptiveGC(Thread * pThread)
     pThread->DisablePreemptiveGC();
 }
 
-void GCToEEInterface::SetGCSpecial(Thread * pThread)
-{
-    pThread->SetGCSpecial(true);
-}
-
-alloc_context * GCToEEInterface::GetAllocContext(Thread * pThread)
+gc_alloc_context * GCToEEInterface::GetAllocContext(Thread * pThread)
 {
     return pThread->GetAllocContext();
 }
@@ -212,10 +215,10 @@ void GCToEEInterface::SyncBlockCachePromotionsGranted(int /*max_gen*/)
 {
 }
 
-bool GCToEEInterface::CreateBackgroundThread(Thread** thread, GCBackgroundThreadFunction threadStart, void* arg)
+Thread* GCToEEInterface::CreateBackgroundThread(GCBackgroundThreadFunction threadStart, void* arg)
 {
     // TODO: Implement for background GC
-    return false;
+    return NULL;
 }
 
 void FinalizerThread::EnableFinalization()

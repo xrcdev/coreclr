@@ -11,6 +11,12 @@ project(CoreCLR)
 # Include cmake functions
 include(functions.cmake)
 
+if (WIN32)
+  message(STATUS "VS_PLATFORM_TOOLSET is ${CMAKE_VS_PLATFORM_TOOLSET}")
+  message(STATUS "VS_PLATFORM_NAME is ${CMAKE_VS_PLATFORM_NAME}")
+  message(STATUS "VS_WINDOWS_TARGET_PLATFORM_VERSION is ${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")
+endif (WIN32)
+
 # Set commonly used directory names
 set(CLR_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(VM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/vm)
@@ -33,7 +39,19 @@ endif()
 
 # Ensure other tools are present
 if (WIN32)
-    enable_language(ASM_MASM)
+    if(CLR_CMAKE_HOST_ARCH STREQUAL arm)
+      # Explicitly specify the assembler to be used for Arm32 compile
+      file(TO_CMAKE_PATH "$ENV{VCINSTALLDIR}\\bin\\x86_arm\\armasm.exe" CMAKE_ASM_COMPILER)
+
+      set(CMAKE_ASM_MASM_COMPILER ${CMAKE_ASM_COMPILER})
+      message(CMAKE_ASM_MASM_COMPILER explicitly set to: ${CMAKE_ASM_MASM_COMPILER}) 
+      
+      # Enable generic assembly compilation to avoid CMake generate VS proj files that explicitly
+      # use ml[64].exe as the assembler.
+      enable_language(ASM)
+    else()
+      enable_language(ASM_MASM)
+    endif()
 
     # Ensure that MC is present
     find_program(MC mc)
@@ -186,6 +204,8 @@ elseif(WIN32)
     set(CLR_CMAKE_PLATFORM_ARCH_AMD64 1)
   elseif(CLR_CMAKE_HOST_ARCH STREQUAL x86)
     set(CLR_CMAKE_PLATFORM_ARCH_I386 1)
+  elseif(CLR_CMAKE_HOST_ARCH STREQUAL arm)
+    set(CLR_CMAKE_PLATFORM_ARCH_ARM 1)
   elseif(CLR_CMAKE_HOST_ARCH STREQUAL arm64)
     set(CLR_CMAKE_PLATFORM_ARCH_ARM64 1)
   else()
@@ -541,44 +561,5 @@ if(CLR_CMAKE_BUILD_TESTS)
 
   add_subdirectory(tests)
 endif(CLR_CMAKE_BUILD_TESTS)
-
-#----------------------------------------------------
-# Build the project again for cross target components
-#    - intermediates will be placed at %__IntermediatesDir%\crosscomponents
-#    - final binaries will be placed at %__CMakeBinDir%\<hostArch>
-#----------------------------------------------------
-
-if(CLR_CMAKE_PLATFORM_ARCH_ARM64 AND WIN32)
-  # Cross target component build only enabled for win arm64
-  set(CLR_CROSS_COMPONENTS_BUILD_ENABLED 1)
-endif()
-
-# To avoid recursion when building cross target components
-if(NOT DEFINED CLR_CROSS_COMPONENTS_BUILD AND CLR_CROSS_COMPONENTS_BUILD_ENABLED)
-
-  # Set host arch for cross target components
-  if(CLR_CMAKE_PLATFORM_ARCH_ARM64)
-    set(CLR_CROSS_BUILD_HOST_ARCH x64)
-  elseif(CLR_CMAKE_PLATFORM_ARCH_ARM)
-    set(CLR_CROSS_BUILD_HOST_ARCH x86)
-  endif()
-
-  include(ExternalProject)
-
-  # Add the source root again as external project but with CLR_CROSS_COMPONENTS_BUILD flag set
-  ExternalProject_Add(
-    crosscomponents
-    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}
-    # Arm64 builds currently pollute the env by setting private toolset dirs. Get rid of that.
-    CMAKE_COMMAND "$ENV{__VSToolsRoot}\\..\\..\\VC\\vcvarsall.bat" COMMAND cmake
-    CMAKE_ARGS -DCLR_CROSS_COMPONENTS_BUILD=1
-               -DCMAKE_INSTALL_PREFIX:PATH=$ENV{__CMakeBinDir}/${CLR_CROSS_BUILD_HOST_ARCH}
-               -DCMAKE_USER_MAKE_RULES_OVERRIDE=${CLR_DIR}/src/pal/tools/windows-compiler-override.txt
-               -DCLR_CMAKE_HOST_ARCH=${CLR_CROSS_BUILD_HOST_ARCH}
-               -DCLR_CMAKE_TARGET_ARCH=${CLR_CMAKE_HOST_ARCH}
-    BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/crosscomponents
-    INSTALL_DIR $ENV{__CMakeBinDir}/${CLR_CROSS_BUILD_HOST_ARCH}
-  )
-endif()
 
 include(definitionsconsistencycheck.cmake)

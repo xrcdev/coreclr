@@ -321,9 +321,9 @@ namespace System {
         // is true.  Note that this requires FileIOPermission(PathDiscovery), and so
         // will usually fail in CoreCLR.  To avoid the demand and resulting
         // SecurityException we can explicitly not even try to get fileinfo.
-        #if FEATURE_CORECLR
+#if FEATURE_CORECLR
         [System.Security.SecurityCritical] // auto-generated
-        #endif
+#endif
         private string GetStackTrace(bool needFileInfo)
         {
             string stackTraceString = _stackTraceString;
@@ -380,9 +380,9 @@ namespace System {
         }
     
         public virtual String Source {
-            #if FEATURE_CORECLR
+#if FEATURE_CORECLR
             [System.Security.SecurityCritical] // auto-generated
-            #endif
+#endif
             get { 
                 if (_source == null)
                 {
@@ -411,9 +411,9 @@ namespace System {
 
                 return _source;
             }
-            #if FEATURE_CORECLR
+#if FEATURE_CORECLR
             [System.Security.SecurityCritical] // auto-generated
-            #endif
+#endif
             set { _source = value; }
         }
 
@@ -425,9 +425,9 @@ namespace System {
             return ToString(true, true);
         }
 
-        #if FEATURE_CORECLR
+#if FEATURE_CORECLR
         [System.Security.SecurityCritical] // auto-generated
-        #endif
+#endif
         private String ToString(bool needFileLineInfo, bool needMessage) {
             String message = (needMessage ? Message : null);
             String s;
@@ -889,7 +889,7 @@ namespace System {
         private SafeSerializationManager _safeSerializationManager;
 #endif // FEATURE_SERIALIZATION
 
-    // See clr\src\vm\excep.h's EXCEPTION_COMPLUS definition:
+        // See src\inc\corexcep.h's EXCEPTION_COMPLUS definition:
         private const int _COMPlusExceptionCode = unchecked((int)0xe0434352);   // Win32 exception code for COM+ exceptions
 
         // InternalToString is called by the runtime to get the exception text 
@@ -913,15 +913,13 @@ namespace System {
             // Get the current stack trace string. 
             return ToString(true, true);
         }
-
-#if !FEATURE_CORECLR
+        
         // this method is required so Object.GetType is not made virtual by the compiler
         // _Exception.GetType()
         public new Type GetType()
         {
             return base.GetType();
         }
-#endif
 
         internal bool IsTransient
         {
@@ -978,7 +976,9 @@ namespace System {
     // The Message field is set to the ToString() output of the original exception.
     //--------------------------------------------------------------------------
 
+#if FEATURE_SERIALIZATION
     [Serializable]
+#endif
     internal sealed class CrossAppDomainMarshaledException : SystemException 
     {
         public CrossAppDomainMarshaledException(String message, int errorCode) 
@@ -990,9 +990,9 @@ namespace System {
         // Normally, only Telesto's UEF will see these exceptions.
         // This override prints out the original Exception's ToString()
         // output and hides the fact that it is wrapped inside another excepton.
-        #if FEATURE_CORECLR
+#if FEATURE_CORECLR
         [System.Security.SecurityCritical] // auto-generated
-        #endif
+#endif
         internal override String InternalToString()
         {
             return Message;

@@ -73,7 +73,7 @@ inline HRESULT HRESULT_FROM_WIN32(unsigned long x)
 #define FALSE false
 
 #define CALLBACK __stdcall
-#define FORCEINLINE inline
+#define FORCEINLINE __forceinline
 
 #define INFINITE 0xFFFFFFFF
 
@@ -175,6 +175,12 @@ typedef DWORD (WINAPI *PTHREAD_START_ROUTINE)(void* lpThreadParameter);
 #else // _MSC_VER
 
 #endif // _MSC_VER
+
+typedef struct _PROCESSOR_NUMBER {
+    uint16_t Group;
+    uint8_t Number;
+    uint8_t Reserved;
+} PROCESSOR_NUMBER, *PPROCESSOR_NUMBER;
 
 #endif // _INC_WINDOWS
 
@@ -441,7 +447,7 @@ extern bool g_fFinalizerRunOnShutDown;
 // Locks
 //
 
-struct alloc_context;
+struct gc_alloc_context;
 class Thread;
 
 Thread * GetThread();
@@ -462,13 +468,6 @@ public:
     static void SetFinalizerThread(Thread * pThread);
     static HANDLE GetFinalizerEvent();
 };
-
-#ifdef FEATURE_REDHAWK
-typedef uint32_t (__stdcall *BackgroundCallback)(void* pCallbackContext);
-REDHAWK_PALIMPORT bool REDHAWK_PALAPI PalStartBackgroundGCThread(BackgroundCallback callback, void* pCallbackContext);
-#endif // FEATURE_REDHAWK
-
-void DestroyThread(Thread * pThread);
 
 bool IsGCSpecialThread();
 
@@ -606,5 +605,22 @@ public:
     }
 };
 #endif // STRESS_HEAP
+
+class NumaNodeInfo
+{
+public:
+    static bool CanEnableGCNumaAware();
+    static void GetGroupForProcessor(uint16_t processor_number, uint16_t * group_number, uint16_t * group_processor_number);
+    static bool GetNumaProcessorNodeEx(PPROCESSOR_NUMBER proc_no, uint16_t * node_no);
+};
+
+class CPUGroupInfo
+{
+public:
+    static bool CanEnableGCCPUGroups();
+    static uint32_t GetNumActiveProcessors();
+    static void GetGroupForProcessor(uint16_t processor_number, uint16_t * group_number, uint16_t * group_processor_number);
+};
+
 
 #endif // __GCENV_BASE_INCLUDED__

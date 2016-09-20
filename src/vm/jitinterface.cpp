@@ -27,7 +27,7 @@
 #include "security.h"
 #include "securitymeta.h"
 #include "dllimport.h"
-#include "gc.h"
+#include "gcheaputilities.h"
 #include "comdelegate.h"
 #include "jitperf.h" // to track jit perf
 #include "corprof.h"
@@ -3134,37 +3134,43 @@ void CEEInfo::ComputeRuntimeLookupForSharedGenericToken(DictionaryEntryKind entr
 #if defined(_TARGET_ARM_)
         ThrowHR(E_NOTIMPL); /* TODO - NYI */
 #endif
+        pResultLookup->lookupKind.runtimeLookupArgs = NULL;
+
         switch (entryKind)
         {
+        case DeclaringTypeHandleSlot:
+            _ASSERTE(pTemplateMD != NULL);
+            pResultLookup->lookupKind.runtimeLookupArgs = pTemplateMD->GetMethodTable();
+            pResultLookup->lookupKind.runtimeLookupFlags = READYTORUN_FIXUP_DeclaringTypeHandle;
+            break;
+
         case TypeHandleSlot:
-        {
             pResultLookup->lookupKind.runtimeLookupFlags = READYTORUN_FIXUP_TypeHandle;
             break;
-        }
 
         case MethodDescSlot:
         case MethodEntrySlot:
+        case ConstrainedMethodEntrySlot:
         case DispatchStubAddrSlot:
         {
             if (pTemplateMD != (MethodDesc*)pResolvedToken->hMethod)
                 ThrowHR(E_NOTIMPL);
-            if (((MethodDesc*)pResolvedToken->hMethod)->GetMethodTable_NoLogging() != (MethodTable*)pResolvedToken->hClass)
-                ThrowHR(E_NOTIMPL);
 
             if (entryKind == MethodDescSlot)
                 pResultLookup->lookupKind.runtimeLookupFlags = READYTORUN_FIXUP_MethodHandle;
-            else if (entryKind == MethodEntrySlot)
+            else if (entryKind == MethodEntrySlot || entryKind == ConstrainedMethodEntrySlot)
                 pResultLookup->lookupKind.runtimeLookupFlags = READYTORUN_FIXUP_MethodEntry;
             else
                 pResultLookup->lookupKind.runtimeLookupFlags = READYTORUN_FIXUP_VirtualEntry;
 
+            pResultLookup->lookupKind.runtimeLookupArgs = pConstrainedResolvedToken;
+
             break;
         }
 
-        case DeclaringTypeHandleSlot:
         case FieldDescSlot:
-        case ConstrainedMethodEntrySlot:
-            ThrowHR(E_NOTIMPL);
+            pResultLookup->lookupKind.runtimeLookupFlags = READYTORUN_FIXUP_FieldHandle;
+            break;
 
         default:
             _ASSERTE(!"Unknown dictionary entry kind!");
@@ -5163,7 +5169,6 @@ void CEEInfo::getCallInfo(
     bool resolvedCallVirt = false;
     bool callVirtCrossingVersionBubble = false;
 
-
     // Delegate targets are always treated as direct calls here. (It would be nice to clean it up...).
     if (flags & CORINFO_CALLINFO_LDFTN)
     {
@@ -5281,12 +5286,6 @@ void CEEInfo::getCallInfo(
 
             // For reference types, the constrained type does not affect method resolution
             DictionaryEntryKind entryKind = (!constrainedType.IsNull() && constrainedType.IsValueType()) ? ConstrainedMethodEntrySlot : MethodEntrySlot;
-
-            if (IsReadyToRunCompilation() && pConstrainedResolvedToken != NULL)
-            {
-                // READYTORUN: FUTURE: Constrained generic calls
-                ThrowHR(E_NOTIMPL);
-            }
 
             ComputeRuntimeLookupForSharedGenericToken(entryKind,
                                                       pResolvedToken,
@@ -5685,6 +5684,19 @@ void CEEInfo::getCallInfo(
             pResult->verSig = pResult->sig;
         }
     }
+
+    pResult->secureDelegateInvoke = FALSE;
+
+#ifdef FEATURE_STUBS_AS_IL
+    if (m_pMethodBeingCompiled->IsDynamicMethod())
+    {
+        auto pMD = m_pMethodBeingCompiled->AsDynamicMethodDesc();
+        if (pMD->IsILStub() && pMD->IsSecureDelegateStub())
+        {
+            pResult->secureDelegateInvoke = TRUE;
+        }
+    }
+#endif
 
     EE_TO_JIT_TRANSITION();
 }
@@ -9629,6 +9641,9 @@ void CEEInfo::getEEInfo(CORINFO_EE_INFO *pEEInfoOut)
     // Delegate offsets
     pEEInfoOut->offsetOfDelegateInstance    = DelegateObject::GetOffsetOfTarget();
     pEEInfoOut->offsetOfDelegateFirstTarget = DelegateObject::GetOffsetOfMethodPtr();
+
+    // Secure delegate offsets
+    pEEInfoOut->offsetOfSecureDelegateIndirectCell = DelegateObject::GetOffsetOfMethodPtrAux();
 
     // Remoting offsets
     pEEInfoOut->offsetOfTransparentProxyRP = TransparentProxyObject::GetOffsetOfRP();

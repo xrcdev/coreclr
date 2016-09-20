@@ -7,10 +7,11 @@
 #define _INSTR_H_
 /*****************************************************************************/
 
-#define BAD_CODE    0x0BADC0DE        // better not match a real encoding!
+#define BAD_CODE 0x0BADC0DE // better not match a real encoding!
 
 /*****************************************************************************/
 
+// clang-format off
 DECLARE_TYPED_ENUM(instruction,unsigned)
 {
 #if defined(_TARGET_XARCH_)
@@ -54,6 +55,18 @@ DECLARE_TYPED_ENUM(instruction,unsigned)
     INS_count = INS_none
 }
 END_DECLARE_TYPED_ENUM(instruction,unsigned)
+
+#if defined(_TARGET_XARCH_)
+#if defined(_TARGET_X86_)
+#define INS_r_movs_ptr INS_r_movsd
+#define INS_movs_ptr INS_movsd
+#elif defined(_TARGET_AMD64_)
+#define INS_r_movs_ptr INS_r_movsq
+#define INS_movs_ptr INS_movsq
+#else
+#error Unsupported xarch target
+#endif
+#endif
 
 /*****************************************************************************/
 
@@ -293,7 +306,8 @@ enum InstructionSet
 #endif
     InstructionSet_NONE
 };
+// clang-format on
 
 /*****************************************************************************/
-#endif//_INSTR_H_
+#endif //_INSTR_H_
 /*****************************************************************************/

@@ -18,11 +18,11 @@ namespace System {
     using System.Runtime.Serialization;
     using System.Security;
     using System.Diagnostics.Contracts;
-    
+
     [Serializable]
     [CLSCompliant(false)] 
     [System.Runtime.InteropServices.ComVisible(true)]
-    public struct UIntPtr : ISerializable
+    public struct UIntPtr : IEquatable<UIntPtr>, ISerializable
     {
         [SecurityCritical]
         unsafe private void* m_value;
@@ -67,7 +67,6 @@ namespace System {
             m_value = (void *)l;
         }
 
-#if FEATURE_SERIALIZATION
         [System.Security.SecurityCritical]
         unsafe void ISerializable.GetObjectData(SerializationInfo info, StreamingContext context)
         {
@@ -77,7 +76,6 @@ namespace System {
             Contract.EndContractBlock();
             info.AddValue("value", (ulong)m_value);
         }
-#endif
 
         [System.Security.SecuritySafeCritical]  // auto-generated
         public unsafe override bool Equals(Object obj) {
@@ -86,16 +84,22 @@ namespace System {
             }
             return false;
         }
+
+        [SecuritySafeCritical]
+        unsafe bool IEquatable<UIntPtr>.Equals(UIntPtr other)
+        {
+            return m_value == other.m_value;
+        }
     
         [System.Security.SecuritySafeCritical]  // auto-generated
         public unsafe override int GetHashCode() {
 #if FEATURE_CORECLR
-    #if BIT64
+#if BIT64
             ulong l = (ulong)m_value;
             return (unchecked((int)l) ^ (int)(l >> 32));
-    #else // 32
+#else // 32
             return unchecked((int)m_value);
-    #endif
+#endif
 #else
             return unchecked((int)((long)m_value)) & 0x7fffffff;
 #endif
@@ -197,11 +201,11 @@ namespace System {
 
         [System.Runtime.Versioning.NonVersionable]
         public static UIntPtr operator +(UIntPtr pointer, int offset) {
-            #if BIT64
+#if BIT64
                 return new UIntPtr(pointer.ToUInt64() + (ulong)offset);
-            #else // 32
+#else // 32
                 return new UIntPtr(pointer.ToUInt32() + (uint)offset);
-            #endif
+#endif
         }
 
         [System.Runtime.Versioning.NonVersionable]
@@ -211,11 +215,11 @@ namespace System {
 
         [System.Runtime.Versioning.NonVersionable]
         public static UIntPtr operator -(UIntPtr pointer, int offset) {
-            #if BIT64
+#if BIT64
                 return new UIntPtr(pointer.ToUInt64() - (ulong)offset);
-            #else // 32
+#else // 32
                 return new UIntPtr(pointer.ToUInt32() - (uint)offset);
-            #endif
+#endif
         }
 
         public static int Size

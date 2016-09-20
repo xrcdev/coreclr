@@ -11,7 +11,7 @@ namespace System
     using System.Runtime.Serialization;
     using System.Diagnostics.Contracts;
     using System.Reflection.Emit;
-    
+
     [Serializable]
     [System.Runtime.InteropServices.ComVisible(true)]
     public abstract class MulticastDelegate : Delegate

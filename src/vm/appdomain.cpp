@@ -12,7 +12,7 @@
 #include "strongnameinternal.h"
 #include "excep.h"
 #include "eeconfig.h"
-#include "gc.h"
+#include "gcheaputilities.h"
 #include "eventtrace.h"
 #ifdef FEATURE_FUSION
 #include "assemblysink.h"
@@ -2652,8 +2652,8 @@ void AppDomain::CreateADUnloadStartEvent()
     // If the thread is in cooperative mode, it must have been suspended for the GC so a delete
     // can't happen.
 
-    _ASSERTE(GCHeap::IsGCInProgress() &&
-             GCHeap::IsServerHeap()   &&
+    _ASSERTE(GCHeapUtilities::IsGCInProgress() &&
+             GCHeapUtilities::IsServerHeap()   &&
              IsGCSpecialThread());
 
     SystemDomain* sysDomain = SystemDomain::System();
@@ -2691,7 +2691,7 @@ void SystemDomain::ResetADSurvivedBytes()
     }
     CONTRACT_END;
 
-    _ASSERTE(GCHeap::IsGCInProgress());
+    _ASSERTE(GCHeapUtilities::IsGCInProgress());
 
     SystemDomain* sysDomain = SystemDomain::System();
     if (sysDomain)
@@ -3824,7 +3824,7 @@ HRESULT SystemDomain::RunDllMain(HINSTANCE hInst, DWORD dwReason, LPVOID lpReser
         return S_OK;
 
     // ExitProcess is called while a thread is doing GC.
-    if (dwReason == DLL_PROCESS_DETACH && GCHeap::IsGCInProgress())
+    if (dwReason == DLL_PROCESS_DETACH && GCHeapUtilities::IsGCInProgress())
         return S_OK;
 
     // ExitProcess is called on a thread that we don't know about
@@ -5107,7 +5107,7 @@ void AppDomain::Init()
     // Ref_CreateHandleTableBucket, this is because AD::Init() can race with GC
     // and once we add ourselves to the handle table map the GC can start walking
     // our handles and calling AD::RecordSurvivedBytes() which touches ARM data.
-    if (GCHeap::IsServerHeap())
+    if (GCHeapUtilities::IsServerHeap())
         m_dwNumHeaps = CPUGroupInfo::CanEnableGCCPUGroups() ?
                            CPUGroupInfo::GetNumActiveProcessors() :
                            GetCurrentProcessCpuCount();
@@ -11110,7 +11110,7 @@ void AppDomain::Unload(BOOL fForceUnload)
     }
     if(bForceGC)
     {
-        GCHeap::GetGCHeap()->GarbageCollect();
+        GCHeapUtilities::GetGCHeap()->GarbageCollect();
         FinalizerThread::FinalizerThreadWait();
         SetStage(STAGE_COLLECTED);
         Close(); //NOTHROW!
@@ -11146,7 +11146,7 @@ void AppDomain::Unload(BOOL fForceUnload)
     {
         // do extra finalizer wait to remove any leftover sb entries
         FinalizerThread::FinalizerThreadWait();
-        GCHeap::GetGCHeap()->GarbageCollect();
+        GCHeapUtilities::GetGCHeap()->GarbageCollect();
         FinalizerThread::FinalizerThreadWait();
         LogSpewAlways("Done unload %3.3d\n", unloadCount);
         DumpSyncBlockCache();
@@ -11548,7 +11548,7 @@ void AppDomain::ClearGCHandles()
 
     SetStage(STAGE_HANDLETABLE_NOACCESS);
 
-    GCHeap::GetGCHeap()->WaitUntilConcurrentGCComplete();
+    GCHeapUtilities::GetGCHeap()->WaitUntilConcurrentGCComplete();
 
     // Keep async pin handles alive by moving them to default domain
     HandleAsyncPinHandles();
@@ -13516,8 +13516,8 @@ void SystemDomain::ProcessDelayedUnloadDomains()
     }
     CONTRACTL_END;    
 
-    int iGCRefPoint=GCHeap::GetGCHeap()->CollectionCount(GCHeap::GetGCHeap()->GetMaxGeneration());
-    if (GCHeap::GetGCHeap()->IsConcurrentGCInProgress())
+    int iGCRefPoint=GCHeapUtilities::GetGCHeap()->CollectionCount(GCHeapUtilities::GetGCHeap()->GetMaxGeneration());
+    if (GCHeapUtilities::GetGCHeap()->IsConcurrentGCInProgress())
         iGCRefPoint--;
 
     BOOL bAppDomainToCleanup = FALSE;
@@ -13735,8 +13735,8 @@ void AppDomain::EnumStaticGCRefs(promote_func* fn, ScanContext* sc)
     }
     CONTRACT_END;
 
-    _ASSERTE(GCHeap::IsGCInProgress() &&
-             GCHeap::IsServerHeap()   &&
+    _ASSERTE(GCHeapUtilities::IsGCInProgress() &&
+             GCHeapUtilities::IsServerHeap()   &&
              IsGCSpecialThread());
 
     AppDomain::AssemblyIterator asmIterator = IterateAssembliesEx((AssemblyIterationFlags)(kIncludeLoaded | kIncludeExecution));
@@ -14241,6 +14241,8 @@ HRESULT RuntimeInvokeHostAssemblyResolver(INT_PTR pManagedAssemblyLoadContextToB
         GCPROTECT_BEGIN(_gcRefs);
         
         ICLRPrivAssembly *pAssemblyBindingContext = NULL;
+
+        bool fInvokedForTPABinder = (pTPABinder == NULL)?true:false;
         
         // Prepare to invoke System.Runtime.Loader.AssemblyLoadContext.Resolve method.
         //
@@ -14250,47 +14252,48 @@ HRESULT RuntimeInvokeHostAssemblyResolver(INT_PTR pManagedAssemblyLoadContextToB
         hr = spec.Init(pIAssemblyName);
         if (SUCCEEDED(hr))
         {
-            // Step 2 (of CLRPrivBinderAssemblyLoadContext::BindUsingAssemblyName) - Invoke Load method
-            //
+            bool fResolvedAssembly = false;
+            bool fResolvedAssemblyViaTPALoadContext = false;
+
             // Allocate an AssemblyName managed object
             _gcRefs.oRefAssemblyName = (ASSEMBLYNAMEREF) AllocateObject(MscorlibBinder::GetClass(CLASS__ASSEMBLY_NAME));
             
             // Initialize the AssemblyName object from the AssemblySpec
             spec.AssemblyNameInit(&_gcRefs.oRefAssemblyName, NULL);
-            
-            // Finally, setup arguments for invocation
-            BinderMethodID idHAR_Resolve = METHOD__ASSEMBLYLOADCONTEXT__RESOLVE;
-            MethodDescCallSite methLoadAssembly(idHAR_Resolve);
-            
-            // Setup the arguments for the call
-            ARG_SLOT args[2] =
+                
+            if (!fInvokedForTPABinder)
             {
-                PtrToArgSlot(pManagedAssemblyLoadContextToBindWithin), // IntPtr for managed assembly load context instance
-                ObjToArgSlot(_gcRefs.oRefAssemblyName), // AssemblyName instance
-            };
+                // Step 2 (of CLRPrivBinderAssemblyLoadContext::BindUsingAssemblyName) - Invoke Load method
+                // This is not invoked for TPA Binder since it always returns NULL.
 
-            bool fResolvedAssembly = true;
-            bool fResolvedAssemblyViaTPALoadContext = false;
-            
-            // Make the call
-            _gcRefs.oRefLoadedAssembly = (ASSEMBLYREF) methLoadAssembly.Call_RetOBJECTREF(args);
-            if (_gcRefs.oRefLoadedAssembly == NULL)
-            {
-                fResolvedAssembly = false;
-            }
-            
-            if (!fResolvedAssembly)
-            {
-                // Step 3 (of CLRPrivBinderAssemblyLoadContext::BindUsingAssemblyName)
-                //
-                // If we could not resolve the assembly using Load method, then bind using TPA binder if present in its
-                // load context.
-                if (pTPABinder != NULL)
+                // Finally, setup arguments for invocation
+                BinderMethodID idHAR_Resolve = METHOD__ASSEMBLYLOADCONTEXT__RESOLVE;
+                MethodDescCallSite methLoadAssembly(idHAR_Resolve);
+                
+                // Setup the arguments for the call
+                ARG_SLOT args[2] =
                 {
+                    PtrToArgSlot(pManagedAssemblyLoadContextToBindWithin), // IntPtr for managed assembly load context instance
+                    ObjToArgSlot(_gcRefs.oRefAssemblyName), // AssemblyName instance
+                };
+
+                // Make the call
+                _gcRefs.oRefLoadedAssembly = (ASSEMBLYREF) methLoadAssembly.Call_RetOBJECTREF(args);
+                if (_gcRefs.oRefLoadedAssembly != NULL)
+                {
+                    fResolvedAssembly = true;
+                }
+            
+                // Step 3 (of CLRPrivBinderAssemblyLoadContext::BindUsingAssemblyName)
+                if (!fResolvedAssembly)
+                {
+                    // If we could not resolve the assembly using Load method, then attempt fallback with TPA Binder.
+                    // Since TPA binder cannot fallback to itself, this fallback does not happen for binds within TPA binder.
+                    //
                     // Switch to pre-emp mode before calling into the binder
                     GCX_PREEMP();
-                    BINDER_SPACE::Assembly *pCoreCLRFoundAssembly = NULL;
-                    hr = pTPABinder->BindAssemblyByNameWorker(pAssemblyName, &pCoreCLRFoundAssembly, true /* excludeAppPaths */);
+                    ICLRPrivAssembly *pCoreCLRFoundAssembly = NULL;
+                    hr = pTPABinder->BindAssemblyByName(pIAssemblyName, &pCoreCLRFoundAssembly);
                     if (SUCCEEDED(hr))
                     {
                         pAssemblyBindingContext = pCoreCLRFoundAssembly;

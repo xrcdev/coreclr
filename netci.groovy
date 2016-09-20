@@ -1,7 +1,6 @@
 // Import the utility functionality.
 
-import jobs.generation.Utilities;
-import jobs.generation.JobReport;
+import jobs.generation.*
 
 // The input project name (e.g. dotnet/coreclr)
 def project = GithubProject
@@ -16,6 +15,7 @@ def static getOSGroup(def os) {
     def osGroupMap = ['Ubuntu':'Linux',
         'RHEL7.2': 'Linux',
         'Ubuntu16.04': 'Linux',
+        'Ubuntu16.10': 'Linux',
         'Debian8.4':'Linux',
         'Fedora23':'Linux',
         'OSX':'OSX',
@@ -23,6 +23,7 @@ def static getOSGroup(def os) {
         'FreeBSD':'FreeBSD',
         'CentOS7.1': 'Linux',
         'OpenSUSE13.2': 'Linux',
+        'OpenSUSE42.1': 'Linux',
         'LinuxARMEmulator': 'Linux']
     def osGroup = osGroupMap.get(os, null) 
     assert osGroup != null : "Could not find os group for ${os}"
@@ -35,7 +36,7 @@ class Constants {
     // The Windows_NT_BuildOnly OS is a way to speed up the Non-NT builds temporarily by avoiding
     // test execution in the build flow runs.  It generates the exact same build
     // as Windows_NT but without the tests.
-    def static osList = ['Ubuntu', 'Debian8.4', 'OSX', 'Windows_NT', 'Windows_NT_BuildOnly', 'FreeBSD', 'CentOS7.1', 'OpenSUSE13.2', 'RHEL7.2', 'LinuxARMEmulator', 'Ubuntu16.04', 'Fedora23']
+    def static osList = ['Ubuntu', 'Debian8.4', 'OSX', 'Windows_NT', 'Windows_NT_BuildOnly', 'FreeBSD', 'CentOS7.1', 'OpenSUSE13.2', 'OpenSUSE42.1', 'RHEL7.2', 'LinuxARMEmulator', 'Ubuntu16.04', 'Ubuntu16.10', 'Fedora23']
     def static crossList = ['Ubuntu', 'OSX', 'CentOS7.1', 'RHEL7.2', 'Debian8.4', 'OpenSUSE13.2']
     // This is a set of JIT stress modes combined with the set of variables that
     // need to be set to actually enable that stress mode.  The key of the map is the stress mode and
@@ -76,7 +77,7 @@ class Constants {
                                         'r2r_jitstressregs4', 'r2r_jitstressregs8', 'r2r_jitstressregsx10', 'r2r_jitstressregsx80',
                                         'r2r_jitminopts', 'r2r_jitforcerelocs']
     // This is the basic set of scenarios
-    def static basicScenarios = ['default', 'pri1', 'ilrt', 'r2r', 'pri1r2r', 'gcstress15_pri1r2r', 'longgc', 'coverage', 'gcsimulator'] + r2rJitStressScenarios
+    def static basicScenarios = ['default', 'pri1', 'ilrt', 'r2r', 'pri1r2r', 'gcstress15_pri1r2r', 'longgc', 'coverage', 'formatting', 'gcsimulator'] + r2rJitStressScenarios
     def static configurationList = ['Debug', 'Checked', 'Release']
     // This is the set of architectures
     def static architectureList = ['arm', 'arm64', 'x64', 'x86ryujit', 'x86lb']
@@ -248,6 +249,10 @@ def static getJobName(def configuration, def architecture, def os, def scenario,
             if (scenario == 'default') {
                 // For now we leave x64 off of the name for compatibility with other jobs
                 baseName = configuration.toLowerCase() + '_' + os.toLowerCase()
+            }
+            else if (scenario == 'formatting') {
+                // we don't care about the configuration for the formatting job. It runs all configs
+                baseName = architecture.toLowerCase() + '_' + os.toLowerCase()
             }
             else {
                 baseName = architecture.toLowerCase() + '_' + configuration.toLowerCase() + '_' + os.toLowerCase()
@@ -454,6 +459,11 @@ def static addTriggers(def job, def branch, def isPR, def architecture, def os, 
                 assert architecture == 'x64'
                 Utilities.addPeriodicTrigger(job, '@weekly')
                 break
+            case 'formatting':
+                assert (os == 'Windows_NT' || os == "Ubuntu")
+                assert architecture == 'x64'
+                Utilities.addGithubPushTrigger(job)
+                break
             case 'jitstressregs1':
             case 'jitstressregs2':
             case 'jitstressregs3':
@@ -493,7 +503,14 @@ def static addTriggers(def job, def branch, def isPR, def architecture, def os, 
             case 'gcstress0x3':            
                 if (os != 'CentOS7.1' && !(os in bidailyCrossList)) {
                     assert (os == 'Windows_NT') || (os in Constants.crossList)
-                    Utilities.addPeriodicTrigger(job, '@weekly')
+                    if (architecture == 'arm64') {
+                        assert (os == 'Windows_NT')
+                        Utilities.addPeriodicTrigger(job, '@daily')
+                        addEmailPublisher(job, 'dotnetonarm64@microsoft.com')
+                    }
+                    else {
+                        Utilities.addPeriodicTrigger(job, '@weekly')
+                    }
                 }
                 break
             case 'gcstress0xc':
@@ -536,6 +553,15 @@ def static addTriggers(def job, def branch, def isPR, def architecture, def os, 
                 }
                 break
             }
+
+            if (scenario == 'formatting') {
+                assert configuration == 'Checked'
+                if (os == 'Windows_NT' || os == 'Ubuntu') {
+                    Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${architecture} Formatting", "(?i).*test\\W+${os}\\W+formatting.*")
+                }
+                break
+            }
+
             switch (os) {
                 // OpenSUSE, Debian & RedHat get trigger phrases for pri 0 build, and pri 1 build & test
                 case 'OpenSUSE13.2':
@@ -552,9 +578,11 @@ def static addTriggers(def job, def branch, def isPR, def architecture, def os, 
                     break
                 case 'Fedora23':
                 case 'Ubuntu16.04':
+                case 'Ubuntu16.10':
+                case 'OpenSUSE42.1':
                     assert !isFlowJob
                     assert scenario == 'default'
-                    Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${architecture} ${configuration} Build", '(?i).*test\\W+${os}\\W+.*')
+                    Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${architecture} ${configuration} Build", "(?i).*test\\W+${os}\\W+.*")
                     break                
                 case 'Ubuntu':
                 case 'OSX':
@@ -1086,13 +1114,13 @@ def static addTriggers(def job, def branch, def isPR, def architecture, def os, 
                     switch (scenario) {
                         case 'default':
                             Utilities.addPrivateGithubPRTriggerForBranch(job, branch, contextString,
-                            "(?i).*test\\W+${os}\\W+${architecture}\\W+${configuration}", null, arm64Users)
+                            "(?i).*test\\W+${os}\\W+${architecture}\\W+${configuration}.*", null, arm64Users)
                             break
                         case 'pri1r2r':
                         case 'gcstress0x3':
                         case 'gcstress0xc':
                             Utilities.addPrivateGithubPRTriggerForBranch(job, branch, contextString,
-                            "(?i).*test\\W+${os}\\W+${architecture}\\W+${configuration}\\W+${scenario}", null, arm64Users)
+                            "(?i).*test\\W+${os}\\W+${architecture}\\W+${configuration}\\W+${scenario}.*", null, arm64Users)
                             break
                     }
                     break
@@ -1103,6 +1131,195 @@ def static addTriggers(def job, def branch, def isPR, def architecture, def os, 
             }
             break
         case 'x86ryujit':
+            def arch = 'x86'
+            def jit = 'ryujit'
+            switch (scenario) {
+                case 'default':
+                    // Default trigger
+                    if (os == 'Windows_NT') {
+                        if (configuration == 'Checked') {
+                            Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} Build and Test")
+                        }
+                    }
+                    else {
+                        // default trigger
+                        Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} Build", "(?i).*test\\W+${arch}\\W+${osGroup}.\\W+${jit}.*")
+                    }
+                    break
+                case 'pri1':
+                    // Default trigger
+                    if (configuration == 'Release') {
+                        Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} Priority 1 Build and Test")
+                    }
+                    break
+                case 'ilrt':
+                    if (configuration == 'Release') {
+                        Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} IL RoundTrip Build and Test", "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")
+                    }
+                    break
+                case 'r2r':
+                    if (configuration == 'Checked' || configuration == 'Release') {
+                        Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} R2R pri0 Build & Test", "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")
+                    }
+                    break
+                case 'pri1r2r':
+                    if (configuration == 'Checked' || configuration == 'Release') {
+                        Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} R2R pri1 Build & Test", "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")
+                    }
+                    break
+                case 'gcstress15_pri1r2r':
+                    if (configuration == 'Release' || configuration == 'Checked') {
+                        Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} GCStress 15 R2R pri1 Build & Test", "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")  
+                    }
+                    break
+                case 'r2r_jitstress1':
+                    if (configuration == 'Release' || configuration == 'Checked') {
+                        Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} jitstress1 R2R Build & Test", "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")  
+                    }
+                    break
+                case 'r2r_jitstress2':
+                    if (configuration == 'Release' || configuration == 'Checked') {
+                        Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} jitstress2 R2R Build & Test", "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")  
+                    }
+                    break
+                case 'r2r_jitstressregs1':
+                    if (configuration == 'Release' || configuration == 'Checked') {
+                        Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} jitstressregs1 R2R Build & Test", "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")  
+                    }
+                    break
+                case 'r2r_jitstressregs2':
+                    if (configuration == 'Release' || configuration == 'Checked') {
+                        Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} jitstressregs2 R2R Build & Test", "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")  
+                    }
+                    break
+                case 'r2r_jitstressregs3':
+                    if (configuration == 'Release' || configuration == 'Checked') {
+                        Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} jitstressregs3 R2R Build & Test", "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")  
+                    }
+                    break
+                case 'r2r_jitstressregs4':
+                    if (configuration == 'Release' || configuration == 'Checked') {
+                        Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} jitstressregs4 R2R Build & Test", "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")  
+                    }
+                    break
+                case 'r2r_jitstressregs8':
+                    if (configuration == 'Release' || configuration == 'Checked') {
+                        Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} jitstressregs8 R2R Build & Test", "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")  
+                    }
+                    break
+                case 'r2r_jitstressregsx10':
+                    if (configuration == 'Release' || configuration == 'Checked') {
+                        Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} jitstressregsx10 R2R Build & Test", "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")  
+                    }
+                    break
+                case 'r2r_jitstressregsx80':
+                    if (configuration == 'Release' || configuration == 'Checked') {
+                        Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} jitstressregsx80 R2R Build & Test", "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")  
+                    }
+                    break
+                case 'r2r_jitminopts':
+                    if (configuration == 'Release' || configuration == 'Checked') {
+                        Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} JITMinOpts R2R Build & Test", "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")  
+                    }
+                    break
+                case 'r2r_jitforcerelocs':
+                    if (configuration == 'Release' || configuration == 'Checked') {
+                        Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} ForceRelocs R2R Build & Test", "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")  
+                    }
+                    break
+                case 'longgc':
+                    if (configuration == 'Release') {
+                        Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} Long-Running GC Build & Test", "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")
+                    }
+                    break
+                case 'gcsimulator':
+                    if (configuration == 'Release') {
+                        Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} GC Simulator", "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")
+                    }
+                    break
+                case 'minopts':
+                    assert (os == 'Windows_NT')
+                    Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} Build and Test (Jit - MinOpts)",
+                       "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")
+                    break
+                case 'forcerelocs':                         
+                    assert (os == 'Windows_NT')
+                    Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} Build and Test (Jit - ForceRelocs)",
+                       "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")
+                    break                           
+                case 'jitstress1':
+                    assert (os == 'Windows_NT')
+                    Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} Build and Test (Jit - JitStress=1)",
+                       "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")
+                    break
+                case 'jitstress2':
+                    assert (os == 'Windows_NT')
+                    Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} Build and Test (Jit - JitStress=2)",
+                       "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")
+                    break
+                case 'jitstressregs1':
+                    assert (os == 'Windows_NT')
+                    Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} Build and Test (Jit - JitStressRegs=1)",
+                       "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")
+                    break                       
+                case 'jitstressregs2':
+                    assert (os == 'Windows_NT')
+                    Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} Build and Test (Jit - JitStressRegs=2)",
+                       "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")
+                    break                       
+                case 'jitstressregs3':
+                    assert (os == 'Windows_NT')
+                    Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} Build and Test (Jit - JitStressRegs=3)",
+                       "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")
+                    break                       
+                case 'jitstressregs4':      
+                    assert (os == 'Windows_NT')
+                    Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} Build and Test (Jit - JitStressRegs=4)",
+                       "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")
+                    break                       
+                case 'jitstressregs8':
+                    assert (os == 'Windows_NT')
+                    Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} Build and Test (Jit - JitStressRegs=8)",
+                       "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")
+                    break                       
+                case 'jitstressregs0x10':
+                    assert (os == 'Windows_NT')
+                    Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} Build and Test (Jit - JitStressRegs=0x10)",
+                       "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")
+                    break                       
+                case 'jitstressregs0x80':
+                    assert (os == 'Windows_NT')
+                    Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} Build and Test (Jit - JitStressRegs=0x80)",
+                       "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")
+                    break       
+                case 'jitstress2_jitstressregs1':
+                case 'jitstress2_jitstressregs2':
+                case 'jitstress2_jitstressregs3':
+                case 'jitstress2_jitstressregs4':
+                case 'jitstress2_jitstressregs8':
+                case 'jitstress2_jitstressregs0x10':
+                case 'jitstress2_jitstressregs0x80':
+                case 'gcstress0x3': 
+                case 'gcstress0xc':
+                case 'zapdisable':
+                case 'heapverify1':
+                case 'gcstress0xc_zapdisable':
+                case 'gcstress0xc_zapdisable_jitstress2':
+                case 'gcstress0xc_zapdisable_heapverify1':
+                case 'gcstress0xc_jitstress1':
+                case 'gcstress0xc_jitstress2':
+                case 'gcstress0xc_minopts_heapverify1':                                 
+                    def displayStr = getStressModeDisplayName(scenario)
+                    assert (os == 'Windows_NT')
+                    Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} Build and Test (Jit - ${displayStr})",
+                       "(?i).*test\\W+${os}\\W+${arch}\\W+${jit}\\W+${configuration}\\W+${scenario}.*")
+                    break                                   
+                default:
+                    println("Unknown scenario: ${arch} ${jit} ${scenario}");
+                    assert false
+                    break
+            }
+            break
         case 'x86lb':
             assert (scenario == 'default' || scenario == 'r2r' || scenario == 'pri1r2r' || scenario == 'gcstress15_pri1r2r' || scenario == 'longgc' || scenario == 'gcsimulator' ||
                     Constants.r2rJitStressScenarios.indexOf(scenario) != -1)
@@ -1121,7 +1338,7 @@ def static addTriggers(def job, def branch, def isPR, def architecture, def os, 
                 }
                 else {
                     // default trigger
-                    Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} Build", "(?i).*test\\W+${arch}\\W+${osGroup}.\\W+${jit}*")
+                    Utilities.addGithubPRTriggerForBranch(job, branch, "${os} ${arch} ${jit} ${configuration} Build", "(?i).*test\\W+${arch}\\W+${osGroup}.\\W+${jit}.*")
                 }
             }
             else if (scenario == 'r2r') {
@@ -1333,6 +1550,11 @@ combinedScenarios.each { scenario ->
                             case 'x64':
                                 // Everything implemented
                                 break
+                            case 'x86ryujit':
+                                if (enableCorefxTesting) {
+                                    return
+                                }
+                                break
                             default:
                                 return
                         }
@@ -1439,6 +1661,21 @@ combinedScenarios.each { scenario ->
                                     return
                                 }
                                 break
+                            // We only run Windows and Ubuntu x64 Checked for formatting right now
+                            case 'formatting':
+                                if (os != 'Windows_NT' && os != 'Ubuntu') {
+                                    return
+                                }
+                                if (architecture != 'x64') {
+                                    return
+                                }
+                                if (configuration != 'Checked') {
+                                    return
+                                }
+                                if (isBuildOnly) {
+                                    return
+                                }
+                                break
                             case 'default':
                                 // Nothing skipped
                                 break
@@ -1487,22 +1724,26 @@ combinedScenarios.each { scenario ->
                                     }
 
                                     // For Pri 1 tests, we must shorten the output test binary path names.
-                                    // if __TestIntermediateDir is already set, buildtest.cmd will
+                                    // if __TestIntermediateDir is already set, build-test.cmd will
                                     // output test binaries to that directory. If it is not set, the 
                                     // binaries are sent to a default directory whose name is about
                                     // 35 characters long.
 
                                     else if (scenario == 'pri1' || scenario == 'pri1r2r' || scenario == 'gcstress15_pri1r2r'|| scenario == 'coverage') {
-                                        buildCommands += "set __TestIntermediateDir=int&&build.cmd ${lowerConfiguration} ${arch} Priority 1"
+                                        buildCommands += "set __TestIntermediateDir=int&&build.cmd ${lowerConfiguration} ${arch} -priority=1"
                                     }
                                     else if (scenario == 'ilrt') {
                                         // First do the build with skiptests and then build the tests with ilasm roundtrip
                                         buildCommands += "build.cmd ${lowerConfiguration} ${arch} skiptests"
-                                        buildCommands += "set __TestIntermediateDir=int&&tests\\buildtest.cmd ${lowerConfiguration} ${arch} ilasmroundtrip"
+                                        buildCommands += "set __TestIntermediateDir=int&&build-test.cmd ${lowerConfiguration} ${arch} -ilasmroundtrip"
                                     }
                                     else if (isLongGc(scenario)) {
                                         buildCommands += "build.cmd ${lowerConfiguration} ${arch} skiptests"
-                                        buildCommands += "set __TestIntermediateDir=int&&tests\\buildtest.cmd ${lowerConfiguration} ${arch}"
+                                        buildCommands += "set __TestIntermediateDir=int&&build-test.cmd ${lowerConfiguration} ${arch}"
+                                    }
+                                    else if (scenario == 'formatting') {
+                                        buildCommands += "python -u tests\\scripts\\format.py -c %WORKSPACE% -o Windows_NT -a ${arch}"
+                                        break
                                     }
                                     else {
                                         println("Unknown scenario: ${scenario}")
@@ -1587,16 +1828,22 @@ combinedScenarios.each { scenario ->
                                                 buildCommands += getStressModeEnvSetCmd(os, scenario);
                                                 
                                                 // Run corefx build and testing
-                                                buildCommands += "cd fx && call \"C:\\Program Files (x86)\\Microsoft Visual Studio 14.0\\VC\\vcvarsall.bat\" x86 && Build.cmd /p:ConfigurationGroup=Release  /p:BUILDTOOLS_OVERRIDE_RUNTIME=%WORKSPACE%\\clr\\bin\\Product\\Windows_NT.x64.Checked "                                                                                              
+                                                buildCommands += "cd fx && call \"C:\\Program Files (x86)\\Microsoft Visual Studio 14.0\\VC\\vcvarsall.bat\" x86 && Build.cmd -Release -- /p:BUILDTOOLS_OVERRIDE_RUNTIME=%WORKSPACE%\\clr\\bin\\Product\\Windows_NT.x64.Checked "                                                                                              
                                             }
                                             else {
                                                 def stepScriptLocation = "%WORKSPACE%\\bin\\tests\\SetStressModes.bat"
-                                                buildCommands += genStressModeScriptStep(os, scenario, Constants.jitStressModeScenarios[scenario], stepScriptLocation)
+                                                
+                                                if (architecture == 'x86ryujit'){
+                                                    def x86Vars = ['COMPLUS_AltJit' : '*', 'COMPLUS_AltJitName' : 'protojit.dll', 'COMPLUS_NoGuiOnAssert' : '1']
+                                                    buildCommands += genStressModeScriptStep(os, scenario, Constants.jitStressModeScenarios[scenario] + x86Vars, stepScriptLocation)
+                                                }
+                                                else {
+                                                    buildCommands += genStressModeScriptStep(os, scenario, Constants.jitStressModeScenarios[scenario], stepScriptLocation)
+                                                }
                                                 
                                                 // Run tests with the 
-                                                
                                                 buildCommands += "tests\\runtest.cmd ${runtestArguments} TestEnv ${stepScriptLocation}"
-                                            }                                            
+                                            }
                                         }
                                         else if (architecture == 'x64') {
                                             buildCommands += "tests\\runtest.cmd ${runtestArguments}"
@@ -1656,10 +1903,10 @@ combinedScenarios.each { scenario ->
 
                                     // Debug runs take too long to run. So build job only.
                                     if (lowerConfiguration == "debug") {
-                                       buildCommands += "set __TestIntermediateDir=int&&build.cmd ${lowerConfiguration} ${architecture} /toolset_dir C:\\ats2"
+                                       buildCommands += "set __TestIntermediateDir=int&&build.cmd ${lowerConfiguration} ${architecture} toolset_dir C:\\ats2"
                                     }
                                     else {
-                                       buildCommands += "set __TestIntermediateDir=int&&build.cmd skiptests ${lowerConfiguration} ${architecture} /toolset_dir C:\\ats2"
+                                       buildCommands += "set __TestIntermediateDir=int&&build.cmd skiptests ${lowerConfiguration} ${architecture} toolset_dir C:\\ats2"
                                        // Test build and run are launched together.
                                        buildCommands += "Z:\\arm64\\common\\scripts\\arm64PostLauncher.cmd %WORKSPACE% ${architecture} ${lowerConfiguration} ${scenario}"
                                        Utilities.addXUnitDotNETResults(newJob, 'bin/tests/testResults.xml')
@@ -1676,12 +1923,14 @@ combinedScenarios.each { scenario ->
                             break
                         case 'Ubuntu':
                         case 'Ubuntu16.04':
+                        case 'Ubuntu16.10':
                         case 'Debian8.4':
                         case 'OSX':
                         case 'FreeBSD':
                         case 'CentOS7.1':
                         case 'RHEL7.2':
                         case 'OpenSUSE13.2':
+                        case 'OpenSUSE42.1':
                         case 'Fedora23':
                             switch (architecture) {
                                 case 'x64':
@@ -1690,6 +1939,11 @@ combinedScenarios.each { scenario ->
                                     def arch = architecture
                                     if (architecture == 'x86ryujit' || architecture == 'x86lb') {
                                         arch = 'x86'
+                                    }
+
+                                    if (scenario == 'formatting') {
+                                        buildCommands += "python tests/scripts/format.py -c \${WORKSPACE} -o Linux -a ${arch}"
+                                        break
                                     }
                                 
                                     if (!enableCorefxTesting) {
@@ -1701,7 +1955,9 @@ combinedScenarios.each { scenario ->
                                         }
                                         else
                                         {
-                                            buildCommands += "./build.sh verbose ${lowerConfiguration} ${arch}"
+                                            def bootstrapRid = Utilities.getBoostrapPublishRid(os)
+                                            def bootstrapRidEnv = bootstrapRid != null ? "__PUBLISH_RID=${bootstrapRid} " : ''
+                                            buildCommands += "${bootstrapRidEnv}./build.sh verbose ${lowerConfiguration} ${arch}"
                                         }
                                         buildCommands += "src/pal/tests/palsuite/runpaltests.sh \${WORKSPACE}/bin/obj/${osGroup}.${arch}.${configuration} \${WORKSPACE}/bin/paltestout"
                                     
@@ -1726,12 +1982,12 @@ combinedScenarios.each { scenario ->
                                         buildCommands += "git clone https://github.com/dotnet/corefx fx"
                                         
                                         // Set environment variable
-                                        def setEnvVar = getStressModeEnvSetCmd(os, scenario)                                        
+                                        def setEnvVar = getStressModeEnvSetCmd(os, scenario)
 
                                         // Build and text corefx
                                         buildCommands += "rm -rf \$WORKSPACE/fx_home; mkdir \$WORKSPACE/fx_home"
                                         buildCommands += setEnvVar
-                                        buildCommands += "cd fx; export HOME=\$WORKSPACE/fx_home; ./build.sh /p:ConfigurationGroup=Release /p:BUILDTOOLS_OVERRIDE_RUNTIME=\$WORKSPACE/clr/bin/Product/Linux.x64.Checked /p:Outerloop=true /p:TestWithLocalLibraries=true"  
+                                        buildCommands += "cd fx; export HOME=\$WORKSPACE/fx_home; ./build.sh -Release -Outerloop -TestWithLocalLibraries -- /p:BUILDTOOLS_OVERRIDE_RUNTIME=\$WORKSPACE/clr/bin/Product/Linux.x64.Checked"  
 
                                         // Archive and process test result
                                         Utilities.addArchival(newJob, "fx/bin/tests/**/testResults.xml")
@@ -1768,11 +2024,24 @@ combinedScenarios.each { scenario ->
                                         def armemul_path = '/opt/linux-arm-emulator'
                                         def armrootfs_mountpath = '/opt/linux-arm-emulator-root'
 
-                                        // Call the ARM emulator build script to cross build using the ARM emulator rootfs
-                                        buildCommands += "./tests/scripts/arm32_ci_script.sh --emulatorPath=${armemul_path} --mountPath=${armrootfs_mountpath} --buildConfig=${lowerConfiguration}"
+                                        // Unzip the Windows test binaries first. Exit with 0
+                                        buildCommands += "unzip -q -o ./bin/tests/tests.zip -d ./bin/tests/Windows_NT.x64.${configuration} || exit 0"
+
+                                        // Unpack the corefx binaries
+                                        buildCommands += "tar -xf ./bin/build.tar.gz"
+
+                                        // Call the ARM emulator build script to cross build and test using the ARM emulator rootfs
+                                        buildCommands += """./tests/scripts/arm32_ci_script.sh \\
+                                        --emulatorPath=${armemul_path} \\
+                                        --mountPath=${armrootfs_mountpath} \\
+                                        --buildConfig=${lowerConfiguration} \\
+                                        --testRootDir=./bin/tests/Windows_NT.x64.${configuration} \\
+                                        --coreFxNativeBinDir=./bin/Linux.arm-softfp.${configuration} \\
+                                        --coreFxBinDir=\"./bin/Linux.AnyCPU.${configuration};./bin/Unix.AnyCPU.${configuration};./bin/AnyOS.AnyCPU.${configuration}\" \\
+                                        --testDirFile=./tests/testsRunningInsideARM.txt"""
 
 
-                                        // Basic archiving of the build, no pal tests
+                                        // Basic archiving of the build
                                         Utilities.addArchival(newJob, "bin/Product/**")
                                         break
                                     }
@@ -1796,6 +2065,35 @@ combinedScenarios.each { scenario ->
                                 }
                             }
                             else {
+                                // Setup corefx and Windows test binaries for Linux ARM Emulator Build
+                                if (isLinuxEmulatorBuild) {
+                                    // Define the Windows Tests and Corefx build job names
+                                    def WindowTestsName = projectFolder + '/' +
+                                                          Utilities.getFullJobName(project,
+                                                                                   getJobName(lowerConfiguration,
+                                                                                              'x64' ,
+                                                                                              'windows_nt',
+                                                                                              'default',
+                                                                                              true),
+                                                                                   false)
+                                    def corefxFolder = Utilities.getFolderName('dotnet/corefx') + '/' +
+                                                       Utilities.getFolderName(branch)
+
+                                    // Copy the Windows test binaries and the Corefx build binaries
+                                    copyArtifacts(WindowTestsName) {
+                                        excludePatterns('**/testResults.xml', '**/*.ni.dll')
+                                        buildSelector {
+                                            latestSuccessful(true)
+                                        }
+                                    }
+                                    copyArtifacts("${corefxFolder}/linuxarmemulator_cross_${lowerConfiguration}") {
+                                        includePatterns('bin/build.tar.gz')
+                                        buildSelector {
+                                            latestSuccessful(true)
+                                        }
+                                    }
+                                }
+
                                 buildCommands.each { buildCommand ->
                                     shell(buildCommand)
                                 }
@@ -1914,6 +2212,8 @@ combinedScenarios.each { scenario ->
                                 if (configuration != 'Release') {
                                     return
                                 }
+                            case 'formatting':
+                                return
                             case 'default':
                                 // Nothing skipped
                                 break
@@ -2092,15 +2392,18 @@ combinedScenarios.each { scenario ->
                                 // Unzip the tests first.  Exit with 0
                                 shell("unzip -q -o ./clr/bin/tests/tests.zip -d ./clr/bin/tests/Windows_NT.${architecture}.${configuration} || exit 0")
 
-                                shell("ls clr/bin")
                                 // Get corefx
                                 shell("git clone https://github.com/dotnet/corefx fx")
-                                shell("ls")
-                                shell("pwd")
+
                                 // Build Linux corefx
-                                shell("./fx/build.sh x64 release Linux skiptests")
-                                // Check contents of bin directory - this can be removed after we confirm everything is as expected
-                                shell("ls ./fx/bin")
+                                shell("./fx/build-native.sh -release -buildArch=x64 -os=Linux")
+                                shell("./fx/build-managed.sh -release -buildArch=x64 -osgroup=Linux -skiptests")
+
+                                def testEnvOpt = ""
+                                def scriptFileName = "\$WORKSPACE/set_stress_test_env.sh"
+                                def createScriptCmds = genStressModeScriptStep(os, scenario, Constants.jitStressModeScenarios['heapverify1'], scriptFileName)
+                                shell("${createScriptCmds}")
+                                testEnvOpt = "--test-env=" + scriptFileName
 
                                 // Run corefx tests
                                 shell("""./fx/run-test.sh \\
@@ -2121,12 +2424,19 @@ combinedScenarios.each { scenario ->
                 --coreFxNativeBinDir=\"\$(pwd)/fx/bin/${osGroup}.${architecture}.Release\" \\
                 --crossgen --runcrossgentests""")
 
-                                // Run coreclr tests w/ server GC enabled & produce coverage reports
+                                // Run coreclr tests w/ server GC & HeapVerify enabled
                                 shell("""./clr/tests/runtest.sh \\
                 --testRootDir=\"\$(pwd)/clr/bin/tests/Windows_NT.${architecture}.${configuration}\" \\
                 --testNativeBinDir=\"\$(pwd)/clr/bin/obj/${osGroup}.${architecture}.${configuration}/tests\" \\
                 --coreOverlayDir=\"\$(pwd)/clr/bin/tests/Windows_NT.${architecture}.${configuration}/Tests/coreoverlay\" \\
-                --useServerGC --coreclr-coverage \\
+                --useServerGC ${testEnvOpt}""")
+
+                                 // Run long-running coreclr GC tests & produce coverage reports
+                                shell("""./clr/tests/runtest.sh \\
+                --testRootDir=\"\$(pwd)/clr/bin/tests/Windows_NT.${architecture}.${configuration}\" \\
+                --testNativeBinDir=\"\$(pwd)/clr/bin/obj/${osGroup}.${architecture}.${configuration}/tests\" \\
+                --coreOverlayDir=\"\$(pwd)/clr/bin/tests/Windows_NT.${architecture}.${configuration}/Tests/coreoverlay\" \\
+                --long-gc --playlist=\"\$(pwd)/clr/tests/longRunningGcTests.txt\" --coreclr-coverage\\
                 --coreclr-objs=\"\$(pwd)/clr/bin/obj/${osGroup}.${architecture}.${configuration}\" \\
                 --coreclr-src=\"\$(pwd)/clr/src\" \\
                 --coverage-output-dir=\"\${WORKSPACE}/coverage\" """)
@@ -2195,6 +2505,13 @@ combinedScenarios.each { scenario ->
                         addEmailPublisher(newJob, 'clrcoverage@microsoft.com')
                     }
 
+                    // Experimental: If on Ubuntu 14.04, then attempt to pull in crash dump links
+                    if (os in ['Ubuntu']) {
+                        SummaryBuilder summaries = new SummaryBuilder()
+                        summaries.addLinksSummaryFromFile('Crash dumps from this run:', 'dumplings.txt')
+                        summaries.emit(newJob)
+                    }
+
                     setMachineAffinity(newJob, os, architecture)
                     Utilities.standardJobSetup(newJob, project, isPR, "*/${branch}")
                     // Set timeouts to 240.
@@ -2252,3 +2569,8 @@ build(params + [CORECLR_BUILD: coreclrBuildJob.build.number,
 } // scenario
 
 JobReport.Report.generateJobReport(out)
+
+// Make the call to generate the help job
+Utilities.createHelperJob(this, project, branch,
+    "Welcome to the ${project} Repository",  // This is prepended to the help message
+    "Have a nice day!")  // This is appended to the help message.  You might put known issues here.
